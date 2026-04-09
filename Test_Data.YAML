@@ -1,0 +1,277 @@
+# Test Data for Golang Middleware API
+# Use with tools like Postman, Insomnia, or curl scripts
+
+base_url: "http://localhost:8080"
+
+# ==============================================
+# UNPROTECTED ENDPOINTS (No Auth Required)
+# ==============================================
+unprotected_routes:
+  - name: "Home Page"
+    method: GET
+    endpoint: "/"
+    headers: {}
+    query_params: {}
+    expected_status: 200
+    expected_response:
+      message: "Welcome to Golang Middleware Demo!"
+      status: "Server is running"
+    curl_command: "curl http://localhost:8080/"
+    browser_test: "http://localhost:8080/"
+
+  - name: "Health Check"
+    method: GET
+    endpoint: "/health"
+    headers: {}
+    query_params: {}
+    expected_status: 200
+    expected_response: "OK"
+    curl_command: "curl http://localhost:8080/health"
+    browser_test: "http://localhost:8080/health"
+
+  - name: "Login - Default User"
+    method: GET
+    endpoint: "/login"
+    headers: {}
+    query_params: {}
+    expected_status: 200
+    expected_response:
+      token: "<JWT_TOKEN_STRING>"
+      type: "Bearer"
+      usage: "Add header: Authorization: Bearer <token>"
+    curl_command: "curl http://localhost:8080/login"
+    browser_test: "http://localhost:8080/login"
+
+  - name: "Login - Custom Username"
+    method: GET
+    endpoint: "/login"
+    headers: {}
+    query_params:
+      username: "alice"
+    expected_status: 200
+    expected_response:
+      token: "<JWT_TOKEN_STRING>"
+      type: "Bearer"
+      usage: "Add header: Authorization: Bearer <token>"
+    curl_command: "curl http://localhost:8080/login?username=alice"
+    browser_test: "http://localhost:8080/login?username=alice"
+
+# ==============================================
+# PROTECTED ENDPOINTS (Requires JWT Token)
+# ==============================================
+protected_routes:
+  - name: "Ping - With Valid Token"
+    method: GET
+    endpoint: "/ping"
+    headers:
+      Authorization: "Bearer <YOUR_JWT_TOKEN_HERE>"
+    query_params: {}
+    expected_status: 200
+    expected_response:
+      message: "pong"
+      user: "alice"
+      email: "alice@example.com"
+    curl_command: 'curl -H "Authorization: Bearer <YOUR_JWT_TOKEN>" http://localhost:8080/ping'
+    notes: "Replace <YOUR_JWT_TOKEN> with actual token from /login"
+
+  - name: "Ping - Without Token (Should Fail)"
+    method: GET
+    endpoint: "/ping"
+    headers: {}
+    query_params: {}
+    expected_status: 401
+    expected_response: "Malformed Token - Use: Authorization: Bearer <token>"
+    curl_command: "curl http://localhost:8080/ping"
+
+  - name: "Dashboard - With Valid Token"
+    method: GET
+    endpoint: "/dashboard"
+    headers:
+      Authorization: "Bearer <YOUR_JWT_TOKEN_HERE>"
+    query_params: {}
+    expected_status: 200
+    expected_response:
+      message: "Welcome to your dashboard"
+      user: "alice"
+      data:
+        - "item1"
+        - "item2"
+        - "item3"
+    curl_command: 'curl -H "Authorization: Bearer <YOUR_JWT_TOKEN>" http://localhost:8080/dashboard'
+    notes: "Replace <YOUR_JWT_TOKEN> with actual token from /login"
+
+  - name: "Dashboard - Without Token (Should Fail)"
+    method: GET
+    endpoint: "/dashboard"
+    headers: {}
+    query_params: {}
+    expected_status: 401
+    expected_response: "Malformed Token - Use: Authorization: Bearer <token>"
+    curl_command: "curl http://localhost:8080/dashboard"
+
+# ==============================================
+# TEST USERS
+# ==============================================
+test_users:
+  - username: "alice"
+    expected_email: "alice@example.com"
+    description: "Standard test user"
+
+  - username: "bob"
+    expected_email: "bob@example.com"
+    description: "Alternative test user"
+
+  - username: "demo_user"
+    expected_email: "demo_user@example.com"
+    description: "Default user when no username provided"
+
+# ==============================================
+# JWT TOKEN CONFIGURATION
+# ==============================================
+jwt_config:
+  secret_key: "MY_SECRETKEY"
+  algorithm: "HS256"
+  expiration: "24 hours"
+  claims:
+    - "user"
+    - "email"
+    - "exp"
+
+# ==============================================
+# CHROME DEVTOOLS CONSOLE TESTS
+# ==============================================
+chrome_console_tests:
+  simple_test: |
+    // Test unprotected route
+    fetch('http://localhost:8080/')
+      .then(r => r.json())
+      .then(data => console.log(data));
+
+  get_token: |
+    // Get JWT token
+    fetch('http://localhost:8080/login?username=alice')
+      .then(r => r.json())
+      .then(data => console.log('Token:', data.token));
+
+  test_protected: |
+    // Get token and test protected route
+    fetch('http://localhost:8080/login?username=alice')
+      .then(r => r.json())
+      .then(data => {
+        console.log('Token:', data.token);
+        return fetch('http://localhost:8080/ping', {
+          headers: {'Authorization': 'Bearer ' + data.token}
+        });
+      })
+      .then(r => r.json())
+      .then(data => console.log('Protected response:', data));
+
+  full_test_suite: |
+    // Complete test suite
+    const API = 'http://localhost:8080';
+
+    async function testAPI() {
+      console.log('=== Testing Middleware API ===\n');
+
+      // Test 1: Home
+      console.log('1️⃣ Testing Home...');
+      let res = await fetch(API + '/');
+      console.log(await res.json());
+
+      // Test 2: Health
+      console.log('\n2️⃣ Testing Health...');
+      res = await fetch(API + '/health');
+      console.log(await res.text());
+
+      // Test 3: Get Token
+      console.log('\n3️⃣ Getting JWT Token...');
+      res = await fetch(API + '/login?username=alice');
+      const {token} = await res.json();
+      console.log('Token received:', token.substring(0, 50) + '...');
+
+      // Test 4: Ping without token (should fail)
+      console.log('\n4️⃣ Testing Ping WITHOUT token (should fail)...');
+      res = await fetch(API + '/ping');
+      console.log('Status:', res.status, await res.text());
+
+      // Test 5: Ping with token (should succeed)
+      console.log('\n5️⃣ Testing Ping WITH token (should succeed)...');
+      res = await fetch(API + '/ping', {
+        headers: {'Authorization': 'Bearer ' + token}
+      });
+      console.log('Status:', res.status, await res.json());
+
+      // Test 6: Dashboard with token
+      console.log('\n6️⃣ Testing Dashboard WITH token...');
+      res = await fetch(API + '/dashboard', {
+        headers: {'Authorization': 'Bearer ' + token}
+      });
+      console.log('Status:', res.status, await res.json());
+
+      console.log('\n✅ All tests completed!');
+    }
+
+    testAPI();
+
+# ==============================================
+# CURL COMMANDS (Copy & Paste)
+# ==============================================
+curl_commands:
+  step_by_step:
+    step_1: "curl http://localhost:8080/login?username=alice"
+    step_2: "# Copy the token from response"
+    step_3: 'curl -H "Authorization: Bearer <PASTE_TOKEN_HERE>" http://localhost:8080/ping'
+
+  one_liner_bash: |
+    # Get token and test in one command (bash/zsh)
+    TOKEN=$(curl -s http://localhost:8080/login?username=alice | jq -r .token) && \
+    curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/ping
+
+  test_all: |
+    # Test all endpoints
+    echo "1. Home:" && curl -s http://localhost:8080/ && echo ""
+    echo "2. Health:" && curl -s http://localhost:8080/health && echo ""
+    echo "3. Login:" && curl -s http://localhost:8080/login?username=alice && echo ""
+    TOKEN=$(curl -s http://localhost:8080/login?username=alice | jq -r .token)
+    echo "4. Ping (protected):" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/ping && echo ""
+    echo "5. Dashboard (protected):" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/dashboard && echo ""
+
+# ==============================================
+# POSTMAN COLLECTION EQUIVALENT
+# ==============================================
+postman_variables:
+  base_url: "http://localhost:8080"
+  jwt_token: "<SET_AFTER_LOGIN>"
+  username: "alice"
+
+# ==============================================
+# ERROR SCENARIOS TO TEST
+# ==============================================
+error_scenarios:
+  - name: "Missing Authorization Header"
+    endpoint: "/ping"
+    headers: {}
+    expected_status: 401
+    expected_message: "Malformed Token"
+
+  - name: "Invalid Token Format"
+    endpoint: "/ping"
+    headers:
+      Authorization: "InvalidTokenFormat"
+    expected_status: 401
+    expected_message: "Malformed Token"
+
+  - name: "Expired Token"
+    endpoint: "/ping"
+    headers:
+      Authorization: "Bearer <EXPIRED_TOKEN>"
+    expected_status: 401
+    expected_message: "Unauthorized - Invalid Token"
+    notes: "Generate token with past expiration time"
+
+  - name: "Invalid Signature"
+    endpoint: "/ping"
+    headers:
+      Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid.signature"
+    expected_status: 401
+    expected_message: "Unauthorized - Invalid Token"
