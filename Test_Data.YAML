@@ -98,6 +98,55 @@ protected_routes:
         - "item2"
         - "item3"
     curl_command: 'curl -H "Authorization: Bearer <YOUR_JWT_TOKEN>" http://localhost:8080/dashboard'
+
+# ==============================================
+# RATE LIMITED ENDPOINTS
+# ==============================================
+rate_limited_routes:
+  - name: "Login - Rate Limit Test (Request 1-5)"
+    method: GET
+    endpoint: "/login"
+    headers: {}
+    query_params:
+      username: "test_user"
+    expected_status: 200
+    expected_response:
+      token: "<JWT_TOKEN_STRING>"
+      type: "Bearer"
+    notes: "First 5 requests within 1 minute should succeed"
+    curl_command: "curl http://localhost:8080/login?username=test_user"
+
+  - name: "Login - Rate Limit Exceeded (Request 6+)"
+    method: GET
+    endpoint: "/login"
+    headers: {}
+    query_params:
+      username: "test_user"
+    expected_status: 429
+    expected_response:
+      error: "Rate limit exceeded"
+      message: "Maximum 5 requests per 1m0s allowed"
+      ip: "<CLIENT_IP>"
+    notes: "6th request within 1 minute should be blocked"
+    curl_command: "curl http://localhost:8080/login?username=test_user"
+
+  - name: "Rate Limit Test Script"
+    description: "Bash script to test rate limiting"
+    script: |
+      #!/bin/bash
+      echo "Testing Rate Limit on /login endpoint"
+      echo "Sending 7 requests to trigger rate limit..."
+      echo ""
+      
+      for i in {1..7}; do
+        echo "Request $i:"
+        curl -s http://localhost:8080/login?username=test_user | jq '.'
+        echo ""
+        sleep 0.5
+      done
+      
+      echo "✅ First 5 requests should succeed"
+      echo "❌ Requests 6-7 should return 429 (Too Many Requests)"
     notes: "Replace <YOUR_JWT_TOKEN> with actual token from /login"
 
   - name: "Dashboard - Without Token (Should Fail)"
