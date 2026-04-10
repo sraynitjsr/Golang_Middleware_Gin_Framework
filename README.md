@@ -75,8 +75,27 @@ protected.Use(middleware())
 ## Project Examples
 
 This project demonstrates:
-- JWT authentication middleware
-- Logging middleware
+- **JWT authentication middleware** - Token-based authentication for protected routes
+- **Logging middleware** - Request/response logging with timing
+- **Rate limiting middleware** - Prevents abuse by limiting requests per IP
 - Multiple middleware chaining
 - Protected vs unprotected routes
 - Context value passing between middleware and handlers
+
+## Rate Limiting
+
+The rate limiter prevents abuse by tracking requests per IP address:
+- **Limit**: 5 requests per minute per IP
+- **Applied to**: `/login` endpoint (prevents brute force attacks)
+- **Storage**: In-memory map with automatic cleanup
+- **Response**: HTTP 429 (Too Many Requests) when limit exceeded
+
+Example test:
+```bash
+# Send 7 requests quickly to test rate limiting
+for i in {1..7}; do
+  echo "Request $i:"
+  curl "http://localhost:8080/login?username=test"
+  echo ""
+done
+```
