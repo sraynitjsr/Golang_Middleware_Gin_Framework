@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -14,6 +15,74 @@ import (
 
 // Secret key for JWT signing/verification
 const SECRET_KEY = "MY_SECRETKEY"
+
+// Rate limiter configuration
+const (
+	RATE_LIMIT_REQUESTS = 5               // Max requests per time window
+	RATE_LIMIT_WINDOW   = 1 * time.Minute // Time window duration
+)
+
+// ============================================
+// RATE LIMITER STORAGE
+// Tracks request counts per IP address
+// ============================================
+type rateLimiter struct {
+	mu       sync.Mutex
+	visitors map[string]*visitor
+}
+
+type visitor struct {
+	count      int
+	lastAccess time.Time
+}
+
+var limiter = &rateLimiter{
+	visitors: make(map[string]*visitor),
+}
+
+// Clean up old entries periodically
+func (rl *rateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	for ip, v := range rl.visitors {
+		if now.Sub(v.lastAccess) > RATE_LIMIT_WINDOW {
+			delete(rl.visitors, ip)
+		}
+	}
+}
+
+// Check if IP has exceeded rate limit
+func (rl *rateLimiter) isAllowed(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	v, exists := rl.visitors[ip]
+
+	if !exists {
+		rl.visitors[ip] = &visitor{count: 1, lastAccess: now}
+		return true
+	}
+
+	// Reset counter if window has passed
+	if now.Sub(v.lastAccess) > RATE_LIMIT_WINDOW {
+		v.count = 1
+		v.lastAccess = now
+		return true
+	}
+
+	// Check if limit exceeded
+	if v.count >= RATE_LIMIT_REQUESTS {
+		return false
+	}
+
+	// Increment counter
+	v.count++
+	v.lastAccess = now
+	return true
+}
 
 // ============================================
 // MIDDLEWARE 1: Logging Middleware
@@ -36,7 +105,43 @@ func loggingMiddleware(next http.Handler) http.Handler {
 }
 
 // ============================================
-// MIDDLEWARE 2: JWT Authentication Middleware
+// MIDDLEWARE 2: Rate Limiting Middleware
+// Limits requests per IP address to prevent abuse
+// Blocks requests that exceed the rate limit
+// ============================================
+func rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract IP address (remove port)
+		ip := r.RemoteAddr
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			ip = strings.Split(forwarded, ",")[0]
+		} else {
+			// Remove port from IP:Port format
+			if colonIndex := strings.LastIndex(ip, ":"); colonIndex != -1 {
+				ip = ip[:colonIndex]
+			}
+		}
+
+		// Check rate limit
+		if !limiter.isAllowed(ip) {
+			log.Printf("⚠️  Rate limit exceeded for IP: %s", ip)
+			w.WriteHeader(http.StatusTooManyRequests)
+			response := map[string]string{
+				"error":   "Rate limit exceeded",
+				"message": fmt.Sprintf("Maximum %d requests per %v allowed", RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW),
+				"ip":      ip,
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		log.Printf("✅ Rate limit OK for IP: %s", ip)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ============================================
+// MIDDLEWARE 3: JWT Authentication Middleware
 // Verifies JWT token from Authorization header
 // Blocks requests without valid tokens
 // ============================================
@@ -154,10 +259,22 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 // MAIN
 // ============================================
 func main() {
+	// Start background cleanup of rate limiter
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			limiter.cleanup()
+			log.Println("🧹 Cleaned up rate limiter expired entries")
+		}
+	}()
+
 	// Unprotected routes (only logging middleware)
 	http.Handle("/", loggingMiddleware(http.HandlerFunc(home)))
 	http.Handle("/health", loggingMiddleware(http.HandlerFunc(health)))
-	http.Handle("/login", loggingMiddleware(http.HandlerFunc(login)))
+
+	// Login with rate limiting to prevent brute force attacks
+	http.Handle("/login", loggingMiddleware(rateLimitMiddleware(http.HandlerFunc(login))))
 
 	// Protected routes (logging + JWT authentication middleware)
 	http.Handle("/ping", loggingMiddleware(jwtAuthMiddleware(http.HandlerFunc(ping))))
@@ -167,13 +284,15 @@ func main() {
 	log.Println("📝 Available endpoints:")
 	log.Println("   GET  /          - Home (unprotected)")
 	log.Println("   GET  /health    - Health check (unprotected)")
-	log.Println("   GET  /login     - Get JWT token (unprotected)")
+	log.Println("   GET  /login     - Get JWT token (rate limited: max 5 req/min)")
 	log.Println("   GET  /ping      - Ping endpoint (protected)")
 	log.Println("   GET  /dashboard - Dashboard (protected)")
 	log.Println("")
 	log.Println("💡 Usage:")
 	log.Println("   1. Get token: curl http://localhost:8080/login?username=alice")
 	log.Println("   2. Use token:  curl -H \"Authorization: Bearer <token>\" http://localhost:8080/ping")
+	log.Println("")
+	log.Println("🛡️  Rate Limiting: Login endpoint limited to 5 requests per minute per IP")
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
